@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: macos-14
+    env:
+      APPCAST_URL: https://raw.githubusercontent.com/christophersbrain/recrd/main/appcast.xml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate required secrets
+        run: |
+          missing=0
+          for key in SPARKLE_PUBLIC_KEY SPARKLE_PRIVATE_KEY MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY; do
+            if [[ -z "${!key:-}" ]]; then
+              echo "Missing required secret: $key" >&2
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+        env:
+          SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+
+      - name: Derive version
+        id: vars
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release_dir=$RUNNER_TEMP/release" >> "$GITHUB_OUTPUT"
+
+      - name: Install signing certificate
+        env:
+          CERT_B64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/release-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          CERT_PATH="$RUNNER_TEMP/release-signing.p12"
+
+          echo "$CERT_B64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      - name: Build app bundle
+        env:
+          RECRD_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          RECRD_VERSION: ${{ steps.vars.outputs.version }}
+          RECRD_BUILD: ${{ github.run_number }}
+          RECRD_APPCAST_URL: ${{ env.APPCAST_URL }}
+          RECRD_SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+        run: ./scripts/build-app.sh
+
+      - name: Package release zip
+        run: |
+          mkdir -p "${{ steps.vars.outputs.release_dir }}"
+          ./scripts/package-release.sh "${{ steps.vars.outputs.release_dir }}" "${{ steps.vars.outputs.version }}"
+
+      - name: Seed existing appcast
+        run: |
+          if git show "origin/main:appcast.xml" > "${{ steps.vars.outputs.release_dir }}/appcast.xml" 2>/dev/null; then
+            echo "Loaded existing appcast.xml from main"
+          else
+            echo "No existing appcast.xml on main; creating fresh feed"
+          fi
+
+      - name: Generate appcast.xml
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          RECRD_EXISTING_APPCAST: ${{ steps.vars.outputs.release_dir }}/appcast.xml
+        run: |
+          ./scripts/generate-appcast.sh \
+            --tag "${{ steps.vars.outputs.tag }}" \
+            --archives-dir "${{ steps.vars.outputs.release_dir }}" \
+            --output "${{ steps.vars.outputs.release_dir }}/appcast.xml" \
+            --download-prefix "https://github.com/${{ github.repository }}/releases/download/${{ steps.vars.outputs.tag }}/"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.vars.outputs.release_dir }}/recrd-v${{ steps.vars.outputs.version }}.zip
+            ${{ steps.vars.outputs.release_dir }}/appcast.xml
+          generate_release_notes: true
+
+      - name: Commit appcast.xml to main
+        run: |
+          git fetch origin main
+          git checkout main
+          cp "${{ steps.vars.outputs.release_dir }}/appcast.xml" appcast.xml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          if git diff --cached --quiet; then
+            echo "No appcast changes to commit"
+            exit 0
+          fi
+          git commit -m "Update appcast for ${{ steps.vars.outputs.tag }}"
+          git push origin main

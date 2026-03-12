@@ -3,6 +3,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import ServiceManagement
+import Sparkle
 import SwiftUI
 
 private enum CaptureKind {
@@ -192,6 +193,33 @@ final class AppRuntimeController: ObservableObject {
 
     func applyMenuBarIcon(_ enabled: Bool) {
         menuBarController.setEnabled(enabled, recorder: recorder)
+    }
+}
+
+@MainActor
+final class AppUpdateController: NSObject, ObservableObject {
+    private let updaterController: SPUStandardUpdaterController?
+
+    override init() {
+        if let feed = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
+           !feed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            updaterController = SPUStandardUpdaterController(
+                startingUpdater: true,
+                updaterDelegate: nil,
+                userDriverDelegate: nil
+            )
+        } else {
+            updaterController = nil
+        }
+        super.init()
+    }
+
+    var isEnabled: Bool {
+        updaterController != nil
+    }
+
+    func checkForUpdates() {
+        updaterController?.checkForUpdates(nil)
     }
 }
 
@@ -1958,12 +1986,14 @@ private struct WindowAccessor: NSViewRepresentable {
 struct RecrdApp: App {
     @StateObject private var recorder: ScreenRecorder
     @StateObject private var appRuntime: AppRuntimeController
+    @StateObject private var appUpdateController: AppUpdateController
 
     init() {
         RecrdTuning.registerDefaults()
         let recorder = ScreenRecorder()
         _recorder = StateObject(wrappedValue: recorder)
         _appRuntime = StateObject(wrappedValue: AppRuntimeController(recorder: recorder))
+        _appUpdateController = StateObject(wrappedValue: AppUpdateController())
     }
 
     var body: some Scene {
@@ -1971,6 +2001,14 @@ struct RecrdApp: App {
             ContentView()
                 .environmentObject(recorder)
                 .environmentObject(appRuntime)
+        }
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    appUpdateController.checkForUpdates()
+                }
+                .disabled(!appUpdateController.isEnabled)
+            }
         }
         Settings {
             RecrdSettingsView()
