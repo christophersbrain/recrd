@@ -464,7 +464,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
         regionSelector.present(
             on: screen,
-            dimOpacity: RecrdTuning.selectionDimOpacity,
+            dimOpacity: 0.05,
             onMouseReleased: { [weak self] in
                 self?.showReleaseGlow()
             },
@@ -1020,7 +1020,7 @@ private final class RegionSelectionView: NSView {
     var onCancel: (() -> Void)?
     var onMouseReleased: (() -> Void)?
     var minimumAcceptedEventTimestamp: TimeInterval = 0
-    var dimOpacity: CGFloat = 0.10
+    var dimOpacity: CGFloat = 0.05
 
     private var dragStart: CGPoint?
     private var dragCurrent: CGPoint?
@@ -1037,7 +1037,7 @@ private final class RegionSelectionView: NSView {
         guard event.timestamp >= minimumAcceptedEventTimestamp else {
             return
         }
-        let point = convert(event.locationInWindow, from: nil)
+        let point = clampedLocalPoint(for: event)
         dragStart = point
         dragCurrent = point
         didDrag = false
@@ -1048,7 +1048,7 @@ private final class RegionSelectionView: NSView {
         guard let start = dragStart else {
             return
         }
-        let current = convert(event.locationInWindow, from: nil)
+        let current = clampedLocalPoint(for: event)
         dragCurrent = current
         if !didDrag {
             let dx = current.x - start.x
@@ -1068,7 +1068,7 @@ private final class RegionSelectionView: NSView {
         }
         onMouseReleased?()
 
-        let end = convert(event.locationInWindow, from: nil)
+        let end = clampedLocalPoint(for: event)
         let rect = normalizedRect(from: start, to: end)
         if !didDrag || rect.width < 8 || rect.height < 8 {
             resetSelectionState()
@@ -1093,25 +1093,29 @@ private final class RegionSelectionView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let start = dragStart else {
-            return
+        let selectionRect: CGRect? = {
+            guard let start = dragStart, let current = dragCurrent else {
+                return nil
+            }
+            return normalizedRect(from: start, to: current)
+        }()
+
+        // Dim entire screen; cut out the active selection with even-odd fill.
+        let maskPath = NSBezierPath(rect: bounds)
+        if let selectionRect, !selectionRect.isEmpty {
+            maskPath.append(NSBezierPath(rect: selectionRect))
+            maskPath.windingRule = .evenOdd
         }
 
         NSColor.black.withAlphaComponent(dimOpacity).setFill()
-        bounds.fill()
+        maskPath.fill()
 
-        guard let current = dragCurrent else {
-            return
+        if let selectionRect, !selectionRect.isEmpty {
+            NSColor.white.setStroke()
+            let border = NSBezierPath(rect: selectionRect)
+            border.lineWidth = 2
+            border.stroke()
         }
-
-        let rect = normalizedRect(from: start, to: current)
-        NSColor.clear.setFill()
-        rect.fill(using: .clear)
-
-        NSColor.white.setStroke()
-        let border = NSBezierPath(rect: rect)
-        border.lineWidth = 2
-        border.stroke()
     }
 
     private func normalizedRect(from start: CGPoint, to end: CGPoint) -> CGRect {
@@ -1128,6 +1132,14 @@ private final class RegionSelectionView: NSView {
         dragCurrent = nil
         didDrag = false
         needsDisplay = true
+    }
+
+    private func clampedLocalPoint(for event: NSEvent) -> CGPoint {
+        let point = convert(event.locationInWindow, from: nil)
+        return CGPoint(
+            x: min(max(0, point.x), bounds.maxX),
+            y: min(max(0, point.y), bounds.maxY)
+        )
     }
 }
 
