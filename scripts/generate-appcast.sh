@@ -82,5 +82,8 @@ else
     "${cmd[@]}"
 fi
 
-cp "$ARCHIVES_DIR/appcast.xml" "$OUTPUT_APPCAST"
+generated_appcast="$ARCHIVES_DIR/appcast.xml"
+if [[ "$generated_appcast" != "$OUTPUT_APPCAST" ]]; then
+    cp "$generated_appcast" "$OUTPUT_APPCAST"
+fi
 echo "Generated appcast: $OUTPUT_APPCAST"
