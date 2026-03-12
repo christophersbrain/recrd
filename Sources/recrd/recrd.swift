@@ -950,7 +950,7 @@ extension ScreenRecorder: AVCaptureFileOutputRecordingDelegate {
 
 @MainActor
 private final class RegionSelectionCoordinator: NSObject {
-    private var windows: [NSWindow] = []
+    private var window: NSWindow?
     private var completion: ((CGRect?) -> Void)?
 
     func present(on screen: NSScreen,
@@ -959,67 +959,44 @@ private final class RegionSelectionCoordinator: NSObject {
                  completion: @escaping (CGRect?) -> Void) {
         dismiss()
         self.completion = completion
+        let window = NSWindow(
+            contentRect: screen.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false,
+            screen: screen
+        )
+        window.isReleasedWhenClosed = false
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.hasShadow = false
+        window.level = .screenSaver
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.ignoresMouseEvents = false
+
+        let selectionView = RegionSelectionView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        selectionView.minimumAcceptedEventTimestamp = ProcessInfo.processInfo.systemUptime + 0.02
+        selectionView.dimOpacity = CGFloat(min(1.0, max(0.0, dimOpacity)))
+        selectionView.onMouseReleased = onMouseReleased
+        selectionView.onComplete = { [weak self] localRect in
+            guard let self else {
+                return
+            }
+            let screenRect = localRect.map { rect in
+                rect.offsetBy(dx: screen.frame.origin.x, dy: screen.frame.origin.y)
+            }
+            self.finish(with: screenRect)
+        }
+        selectionView.onCancel = { [weak self] in
+            self?.finish(with: nil)
+        }
+
+        window.contentView = selectionView
+        self.window = window
 
         NSApp.activate(ignoringOtherApps: true)
-
-        let orderedScreens = NSScreen.screens.sorted { lhs, rhs in
-            if lhs == screen { return false }
-            if rhs == screen { return true }
-            return lhs.frame.minX < rhs.frame.minX
-        }
-
-        var primaryWindow: NSWindow?
-        var primarySelectionView: RegionSelectionView?
-
-        for targetScreen in orderedScreens {
-            let window = SelectionOverlayWindow(
-                contentRect: targetScreen.frame,
-                styleMask: .borderless,
-                backing: .buffered,
-                defer: false,
-                screen: targetScreen
-            )
-            window.isReleasedWhenClosed = false
-            window.backgroundColor = .clear
-            window.isOpaque = false
-            window.hasShadow = false
-            window.level = .screenSaver
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            window.ignoresMouseEvents = false
-
-            let selectionView = RegionSelectionView(frame: NSRect(origin: .zero, size: targetScreen.frame.size))
-            selectionView.dimOpacity = CGFloat(min(1.0, max(0.0, dimOpacity)))
-            selectionView.onMouseReleased = onMouseReleased
-            selectionView.onComplete = { [weak self] localRect in
-                guard let self else {
-                    return
-                }
-                let screenRect = localRect.map { rect in
-                    rect.offsetBy(dx: targetScreen.frame.origin.x, dy: targetScreen.frame.origin.y)
-                }
-                self.finish(with: screenRect)
-            }
-            selectionView.onCancel = { [weak self] in
-                self?.finish(with: nil)
-            }
-
-            window.contentView = selectionView
-            windows.append(window)
-
-            if targetScreen == screen {
-                primaryWindow = window
-                primarySelectionView = selectionView
-            }
-        }
-
-        for window in windows {
-            window.orderFrontRegardless()
-        }
-
-        if let primaryWindow, let primarySelectionView {
-            primaryWindow.makeKeyAndOrderFront(nil)
-            primaryWindow.makeFirstResponder(primarySelectionView)
-        }
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(selectionView)
     }
 
     private func finish(with rect: CGRect?) {
@@ -1033,17 +1010,10 @@ private final class RegionSelectionCoordinator: NSObject {
     }
 
     private func dismiss() {
-        for window in windows {
-            window.orderOut(nil)
-        }
-        windows.removeAll()
+        window?.orderOut(nil)
+        window = nil
         completion = nil
     }
-}
-
-private final class SelectionOverlayWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
 }
 
 @MainActor
@@ -1051,6 +1021,7 @@ private final class RegionSelectionView: NSView {
     var onComplete: ((CGRect?) -> Void)?
     var onCancel: (() -> Void)?
     var onMouseReleased: (() -> Void)?
+    var minimumAcceptedEventTimestamp: TimeInterval = 0
     var dimOpacity: CGFloat = 0.05
 
     private var dragStart: CGPoint?
@@ -1058,7 +1029,6 @@ private final class RegionSelectionView: NSView {
     private var didDrag = false
 
     override var acceptsFirstResponder: Bool { true }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func resetCursorRects() {
         super.resetCursorRects()
@@ -1066,6 +1036,9 @@ private final class RegionSelectionView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard event.timestamp >= minimumAcceptedEventTimestamp else {
+            return
+        }
         let point = clampedLocalPoint(for: event)
         dragStart = point
         dragCurrent = point
@@ -1088,6 +1061,10 @@ private final class RegionSelectionView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        guard event.timestamp >= minimumAcceptedEventTimestamp else {
+            return
+        }
+
         guard let start = dragStart else {
             return
         }
