@@ -1169,8 +1169,6 @@ private enum FloatingToolbarItem: Int, CaseIterable, Hashable {
 struct ContentView: View {
     @EnvironmentObject private var recorder: ScreenRecorder
     @State private var hasAppliedDefaultWindowSize = false
-    @State private var pendingRecordingSingleClickTask: Task<Void, Never>?
-    @State private var pendingScreenshotSingleClickTask: Task<Void, Never>?
     @State private var activeToolbarItem: FloatingToolbarItem = .vid
     @State private var buttonScales: [FloatingToolbarItem: CGFloat] = [.vid: 1.0, .still: 1.0, .open: 1.0, .delete: 1.0]
     @State private var buttonResetTasks: [FloatingToolbarItem: Task<Void, Never>] = [:]
@@ -1314,10 +1312,6 @@ struct ContentView: View {
             installKeyMonitorsIfNeeded()
         }
         .onDisappear {
-            pendingRecordingSingleClickTask?.cancel()
-            pendingRecordingSingleClickTask = nil
-            pendingScreenshotSingleClickTask?.cancel()
-            pendingScreenshotSingleClickTask = nil
             for task in buttonResetTasks.values {
                 task.cancel()
             }
@@ -1365,8 +1359,6 @@ struct ContentView: View {
 
     private func handleRecordingButtonClick() {
         if recorder.isRecording {
-            pendingRecordingSingleClickTask?.cancel()
-            pendingRecordingSingleClickTask = nil
             recorder.stopRecordingFromUI()
             return
         }
@@ -1375,21 +1367,7 @@ struct ContentView: View {
             return
         }
 
-        if let pendingTask = pendingRecordingSingleClickTask {
-            pendingTask.cancel()
-            pendingRecordingSingleClickTask = nil
-            recorder.startRecordingFullScreen()
-            return
-        }
-
-        pendingRecordingSingleClickTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: doubleClickWindowNs)
-            guard !Task.isCancelled else {
-                return
-            }
-            pendingRecordingSingleClickTask = nil
-            recorder.startRecordingWithSelection()
-        }
+        recorder.startRecordingWithSelection()
     }
 
     private func handleScreenshotButtonClick() {
@@ -1397,33 +1375,14 @@ struct ContentView: View {
             return
         }
 
-        if let pendingTask = pendingScreenshotSingleClickTask {
-            pendingTask.cancel()
-            pendingScreenshotSingleClickTask = nil
-            recorder.captureScreenshotFullScreen()
-            return
-        }
-
-        pendingScreenshotSingleClickTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: doubleClickWindowNs)
-            guard !Task.isCancelled else {
-                return
-            }
-            pendingScreenshotSingleClickTask = nil
-            recorder.captureScreenshotWithSelection()
-        }
+        recorder.captureScreenshotWithSelection()
     }
 
     private var shouldShowSelectionPendingGlow: Bool {
         if recorder.isRecording {
             return false
         }
-        return pendingRecordingSingleClickTask != nil || pendingScreenshotSingleClickTask != nil || recorder.isSelectingArea
-    }
-
-    private var doubleClickWindowNs: UInt64 {
-        let seconds = max(0.2, NSEvent.doubleClickInterval)
-        return UInt64(seconds * 1_000_000_000)
+        return recorder.isSelectingArea
     }
 
     private func installKeyMonitorsIfNeeded() {
@@ -1515,8 +1474,6 @@ struct ContentView: View {
             return
         }
 
-        pendingScreenshotSingleClickTask?.cancel()
-        pendingScreenshotSingleClickTask = nil
         recorder.captureScreenshotWithSelection()
     }
 
@@ -1525,8 +1482,6 @@ struct ContentView: View {
         bounceButton(.vid)
 
         if recorder.isRecording {
-            pendingRecordingSingleClickTask?.cancel()
-            pendingRecordingSingleClickTask = nil
             recorder.stopRecordingFromUI()
             return
         }
@@ -1535,8 +1490,6 @@ struct ContentView: View {
             return
         }
 
-        pendingRecordingSingleClickTask?.cancel()
-        pendingRecordingSingleClickTask = nil
         recorder.startRecordingWithSelection()
     }
 
@@ -1548,31 +1501,18 @@ struct ContentView: View {
             return
         }
 
-        pendingScreenshotSingleClickTask?.cancel()
-        pendingScreenshotSingleClickTask = nil
         recorder.captureScreenshotFullScreen()
         recorder.flashGreenGlow()
     }
 
     @discardableResult
     private func cancelPendingCaptureFlowIfNeeded() -> Bool {
-        let hadPending = pendingRecordingSingleClickTask != nil || pendingScreenshotSingleClickTask != nil
-
-        pendingRecordingSingleClickTask?.cancel()
-        pendingRecordingSingleClickTask = nil
-        pendingScreenshotSingleClickTask?.cancel()
-        pendingScreenshotSingleClickTask = nil
         pendingSpaceShortcutTask?.cancel()
         pendingSpaceShortcutTask = nil
         recentSpacePressTimes.removeAll()
 
         if recorder.isSelectingArea {
             recorder.cancelSelectionMode()
-            return true
-        }
-
-        if hadPending {
-            recorder.statusMessage = "Ready"
             return true
         }
 
