@@ -11,6 +11,12 @@ private enum CaptureKind {
     case screenshot
 }
 
+private enum RecrdResources {
+    static func url(forResource name: String, withExtension ext: String) -> URL? {
+        return Bundle.main.url(forResource: name, withExtension: ext)
+    }
+}
+
 private enum RecrdTuning {
     enum Keys {
         static let selectionDimOpacity = "recrd.tuning.selectionDimOpacity"
@@ -1812,7 +1818,7 @@ struct HuskyReferenceView: View {
 
     var body: some View {
         Group {
-            if let url = Bundle.module.url(forResource: "husky-reference-clean", withExtension: "png"),
+            if let url = RecrdResources.url(forResource: "husky-reference-clean", withExtension: "png"),
                let image = NSImage(contentsOf: url) {
                 Image(nsImage: image)
                     .resizable()
@@ -1858,7 +1864,7 @@ private final class DogTapAudioPlayer {
     private init() {}
 
     func play() {
-        guard let url = Bundle.module.url(forResource: "dog-press", withExtension: "mp3") else {
+        guard let url = RecrdResources.url(forResource: "dog-press", withExtension: "mp3") else {
             return
         }
 

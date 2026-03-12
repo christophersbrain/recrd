@@ -8,8 +8,8 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 BINARY_PATH="$ROOT_DIR/.build/release/recrd"
-RESOURCE_BUNDLE_PATH="$ROOT_DIR/.build/release/recrd_recrd.bundle"
 SPARKLE_FRAMEWORK_PATH="$ROOT_DIR/.build/release/Sparkle.framework"
+SOURCE_RESOURCES_DIR="$ROOT_DIR/Sources/recrd/Resources"
 APP_ICON_ICNS_PATH="$ROOT_DIR/Sources/recrd/Resources/AppIcon.icns"
 SETUP_SIGNING_SCRIPT="$ROOT_DIR/scripts/setup-local-signing.sh"
 APPCAST_URL="${RECRD_APPCAST_URL:-https://raw.githubusercontent.com/christophersbrain/recrd/main/appcast.xml}"
@@ -45,6 +45,7 @@ swift build -c release --product recrd
 
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$FRAMEWORKS_DIR"
 cp "$BINARY_PATH" "$MACOS_DIR/recrd"
+rm -rf "$RESOURCES_DIR/recrd_recrd.bundle"
 
 if [[ -d "$SPARKLE_FRAMEWORK_PATH" ]]; then
     rm -rf "$FRAMEWORKS_DIR/Sparkle.framework"
@@ -55,9 +56,8 @@ if ! otool -l "$MACOS_DIR/recrd" | grep -q "@executable_path/../Frameworks"; the
     install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS_DIR/recrd"
 fi
 
-if [[ -d "$RESOURCE_BUNDLE_PATH" ]]; then
-    rm -rf "$RESOURCES_DIR/recrd_recrd.bundle"
-    cp -R "$RESOURCE_BUNDLE_PATH" "$RESOURCES_DIR/recrd_recrd.bundle"
+if [[ -d "$SOURCE_RESOURCES_DIR" ]]; then
+    cp -R "$SOURCE_RESOURCES_DIR"/. "$RESOURCES_DIR"/
 fi
 
 if [[ -f "$APP_ICON_ICNS_PATH" ]]; then

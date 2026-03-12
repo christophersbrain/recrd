@@ -19,8 +19,8 @@ let package = Package(
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
-            resources: [
-                .process("Resources"),
+            exclude: [
+                "Resources",
             ]
         ),
     ]
