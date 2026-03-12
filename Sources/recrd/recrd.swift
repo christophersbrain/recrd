@@ -420,7 +420,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
         }
 
         guard let image = CGDisplayCreateImage(displayID, rect: cropRect) else {
-            statusMessage = "Could not capture the selected area."
+            statusMessage = hasScreenCapturePermission()
+                ? "Could not capture the selected area."
+                : permissionHelpMessage
             return
         }
 
@@ -444,10 +446,6 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     private func beginRegionSelection(for intent: SelectionIntent) {
-        guard ensureScreenCapturePermission() else {
-            return
-        }
-
         guard ensureOutputFolderExists() else {
             return
         }
@@ -486,8 +484,10 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 self.suppressNextSelectionCancelledMessage = false
                 switch intent {
                 case .recording:
+                    _ = self.ensureScreenCapturePermission()
                     self.startRecording(selectedRect: selectedRect, on: screen)
                 case .screenshot:
+                    _ = self.ensureScreenCapturePermission()
                     self.captureScreenshot(selectedRect: selectedRect, on: screen)
                 }
             }
@@ -511,7 +511,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
         }
 
         guard let input = AVCaptureScreenInput(displayID: displayID) else {
-            statusMessage = "Could not access selected display."
+            statusMessage = hasScreenCapturePermission()
+                ? "Could not access selected display."
+                : permissionHelpMessage
             return
         }
 
@@ -537,7 +539,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
         guard session.canAddInput(input) else {
             session.commitConfiguration()
-            statusMessage = "Could not configure display input."
+            statusMessage = hasScreenCapturePermission()
+                ? "Could not configure display input."
+                : permissionHelpMessage
             return
         }
         session.addInput(input)
@@ -571,14 +575,13 @@ final class ScreenRecorder: NSObject, ObservableObject {
         if hasScreenCapturePermission() {
             return true
         }
-        let grantedNow = CGRequestScreenCaptureAccess()
+        _ = CGRequestScreenCaptureAccess()
         if hasScreenCapturePermission() {
             return true
         }
-        statusMessage = grantedNow
-            ? "Permission granted. Quit and reopen recrd."
-            : permissionHelpMessage
-        return false
+
+        // Avoid false-negative blocking; show permission issues at capture points.
+        return true
     }
 
     private func hasScreenCapturePermission() -> Bool {
