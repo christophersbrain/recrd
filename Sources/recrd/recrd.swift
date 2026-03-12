@@ -820,9 +820,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private func startRetentionCleanupTimer() {
         cleanupTimer?.invalidate()
         cleanupTimer = Timer.scheduledTimer(withTimeInterval: cleanupInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.cleanupExpiredFiles()
-            }
+            self?.cleanupExpiredFiles()
         }
     }
 
