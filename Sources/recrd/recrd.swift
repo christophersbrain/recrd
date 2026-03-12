@@ -11,6 +11,17 @@ private enum CaptureKind {
     case screenshot
 }
 
+private enum RecrdDebug {
+    static var selectionEnabled: Bool {
+        ProcessInfo.processInfo.environment["RECRD_DEBUG_SELECTION"] == "1"
+    }
+
+    static func selection(_ message: @autoclosure () -> String) {
+        guard selectionEnabled else { return }
+        print("[recrd-selection] \(message())")
+    }
+}
+
 private enum RecrdResources {
     static func url(forResource name: String, withExtension ext: String) -> URL? {
         return Bundle.main.url(forResource: name, withExtension: ext)
@@ -959,10 +970,11 @@ private final class RegionSelectionCoordinator: NSObject {
                  completion: @escaping (CGRect?) -> Void) {
         dismiss()
         self.completion = completion
+        RecrdDebug.selection("present on screen=\(screen.frame.debugDescription) dim=\(dimOpacity)")
 
-        let window = NSWindow(
+        let window = SelectionOverlayPanel(
             contentRect: screen.frame,
-            styleMask: .borderless,
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false,
             screen: screen
@@ -971,12 +983,12 @@ private final class RegionSelectionCoordinator: NSObject {
         window.backgroundColor = .clear
         window.isOpaque = false
         window.hasShadow = false
-        window.level = .screenSaver
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.level = .mainMenu
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .moveToActiveSpace]
         window.ignoresMouseEvents = false
+        window.hidesOnDeactivate = false
 
         let selectionView = RegionSelectionView(frame: NSRect(origin: .zero, size: screen.frame.size))
-        selectionView.minimumAcceptedEventTimestamp = ProcessInfo.processInfo.systemUptime + 0.02
         selectionView.dimOpacity = CGFloat(min(1.0, max(0.0, dimOpacity)))
         selectionView.onMouseReleased = onMouseReleased
         selectionView.onComplete = { [weak self] localRect in
@@ -997,10 +1009,13 @@ private final class RegionSelectionCoordinator: NSObject {
 
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         window.makeFirstResponder(selectionView)
+        RecrdDebug.selection("window shown key=\(window.isKeyWindow) visible=\(window.isVisible)")
     }
 
     private func finish(with rect: CGRect?) {
+        RecrdDebug.selection("finish rect=\(String(describing: rect))")
         let callback = completion
         dismiss()
         callback?(rect)
@@ -1017,12 +1032,16 @@ private final class RegionSelectionCoordinator: NSObject {
     }
 }
 
+private final class SelectionOverlayPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 @MainActor
 private final class RegionSelectionView: NSView {
     var onComplete: ((CGRect?) -> Void)?
     var onCancel: (() -> Void)?
     var onMouseReleased: (() -> Void)?
-    var minimumAcceptedEventTimestamp: TimeInterval = 0
     var dimOpacity: CGFloat = 0.05
 
     private var dragStart: CGPoint?
@@ -1030,6 +1049,7 @@ private final class RegionSelectionView: NSView {
     private var didDrag = false
 
     override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func resetCursorRects() {
         super.resetCursorRects()
@@ -1037,14 +1057,12 @@ private final class RegionSelectionView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard event.timestamp >= minimumAcceptedEventTimestamp else {
-            return
-        }
         let point = clampedLocalPoint(for: event)
         dragStart = point
         dragCurrent = point
         didDrag = false
         needsDisplay = true
+        RecrdDebug.selection("mouseDown at \(point)")
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -1059,13 +1077,10 @@ private final class RegionSelectionView: NSView {
             didDrag = hypot(dx, dy) >= 3
         }
         needsDisplay = true
+        RecrdDebug.selection("mouseDragged at \(current) didDrag=\(didDrag)")
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard event.timestamp >= minimumAcceptedEventTimestamp else {
-            return
-        }
-
         guard let start = dragStart else {
             return
         }
@@ -1073,6 +1088,7 @@ private final class RegionSelectionView: NSView {
 
         let end = clampedLocalPoint(for: event)
         let rect = normalizedRect(from: start, to: end)
+        RecrdDebug.selection("mouseUp end=\(end) rect=\(rect) didDrag=\(didDrag)")
         if !didDrag || rect.width < 8 || rect.height < 8 {
             resetSelectionState()
             return
