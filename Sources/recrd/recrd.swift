@@ -249,6 +249,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private var toastTask: Task<Void, Never>?
     private var releaseGlowTask: Task<Void, Never>?
     private var cleanupTimer: Timer?
+    private var appDidBecomeActiveObserver: NSObjectProtocol?
     private let permissionHelpMessage = "Enable 'recrd' in Screen Recording settings, then quit and reopen recrd."
     private var suppressNextSelectionCancelledMessage = false
 
@@ -266,6 +267,14 @@ final class ScreenRecorder: NSObject, ObservableObject {
         }
         cleanupExpiredFiles()
         startRetentionCleanupTimer()
+        observeAppActivation()
+    }
+
+    deinit {
+        cleanupTimer?.invalidate()
+        if let appDidBecomeActiveObserver {
+            NotificationCenter.default.removeObserver(appDidBecomeActiveObserver)
+        }
     }
 
     func stopRecordingFromUI() {
@@ -559,15 +568,50 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     private func ensureScreenCapturePermission() -> Bool {
-        if CGPreflightScreenCaptureAccess() {
+        if hasScreenCapturePermission() {
             return true
         }
-        _ = CGRequestScreenCaptureAccess()
-        if CGPreflightScreenCaptureAccess() {
+        let grantedNow = CGRequestScreenCaptureAccess()
+        if hasScreenCapturePermission() {
             return true
         }
-        statusMessage = permissionHelpMessage
+        statusMessage = grantedNow
+            ? "Permission granted. Quit and reopen recrd."
+            : permissionHelpMessage
         return false
+    }
+
+    private func hasScreenCapturePermission() -> Bool {
+        if CGPreflightScreenCaptureAccess() {
+            return true
+        }
+
+        // Fallback probe: on some macOS builds, preflight can lag even when access exists.
+        return CGDisplayCreateImage(CGMainDisplayID()) != nil
+    }
+
+    private func observeAppActivation() {
+        appDidBecomeActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    return
+                }
+
+                guard self.statusMessage == self.permissionHelpMessage
+                        || self.statusMessage == "Permission granted. Quit and reopen recrd."
+                else {
+                    return
+                }
+
+                if self.hasScreenCapturePermission() {
+                    self.statusMessage = "Ready"
+                }
+            }
+        }
     }
 
     private func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
@@ -826,7 +870,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private func startRetentionCleanupTimer() {
         cleanupTimer?.invalidate()
         cleanupTimer = Timer.scheduledTimer(withTimeInterval: cleanupInterval, repeats: true) { [weak self] _ in
-            self?.cleanupExpiredFiles()
+            Task { @MainActor [weak self] in
+                self?.cleanupExpiredFiles()
+            }
         }
     }
 
