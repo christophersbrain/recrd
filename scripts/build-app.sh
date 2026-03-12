@@ -6,8 +6,10 @@ APP_DIR="$ROOT_DIR/dist/recrd.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 BINARY_PATH="$ROOT_DIR/.build/release/recrd"
 RESOURCE_BUNDLE_PATH="$ROOT_DIR/.build/release/recrd_recrd.bundle"
+SPARKLE_FRAMEWORK_PATH="$ROOT_DIR/.build/release/Sparkle.framework"
 APP_ICON_ICNS_PATH="$ROOT_DIR/Sources/recrd/Resources/AppIcon.icns"
 SETUP_SIGNING_SCRIPT="$ROOT_DIR/scripts/setup-local-signing.sh"
 APPCAST_URL="${RECRD_APPCAST_URL:-https://raw.githubusercontent.com/christophersbrain/recrd/main/appcast.xml}"
@@ -28,8 +30,17 @@ fi
 cd "$ROOT_DIR"
 swift build -c release --product recrd
 
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$FRAMEWORKS_DIR"
 cp "$BINARY_PATH" "$MACOS_DIR/recrd"
+
+if [[ -d "$SPARKLE_FRAMEWORK_PATH" ]]; then
+    rm -rf "$FRAMEWORKS_DIR/Sparkle.framework"
+    cp -R "$SPARKLE_FRAMEWORK_PATH" "$FRAMEWORKS_DIR/Sparkle.framework"
+fi
+
+if ! otool -l "$MACOS_DIR/recrd" | grep -q "@executable_path/../Frameworks"; then
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS_DIR/recrd"
+fi
 
 if [[ -d "$RESOURCE_BUNDLE_PATH" ]]; then
     rm -rf "$RESOURCES_DIR/recrd_recrd.bundle"
@@ -40,7 +51,7 @@ if [[ -f "$APP_ICON_ICNS_PATH" ]]; then
     cp "$APP_ICON_ICNS_PATH" "$RESOURCES_DIR/AppIcon.icns"
 fi
 
-cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
+cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
